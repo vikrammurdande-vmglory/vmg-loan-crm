@@ -221,6 +221,23 @@ app.post('/api/cibil-reports/:id/accounts',auth,async(req,res)=>{
   res.status(201).json(a.rows[0]);
 });
 
+app.post('/api/customers/:customerId/approved-obligations',auth,async(req,res)=>{
+  if(!await canAccessCustomer(req.user,req.params.customerId))return res.status(403).json({error:'You cannot access this customer'});
+  const report=await pool.query('SELECT * FROM cibil_reports WHERE customer_id=$1 AND accepted_final=true ORDER BY accepted_at DESC NULLS LAST,created_at DESC LIMIT 1',[req.params.customerId]);
+  if(!report.rows[0])return res.status(409).json({error:'An approved CIBIL report is required before adding an approved obligation.'});
+  const loanType=String(req.body.loan_type||'').trim();
+  if(!loanType)return res.status(400).json({error:'Loan type is required'});
+  const a=await pool.query(`INSERT INTO cibil_accounts(report_id,lender,loan_type,account_number_masked,sanctioned_amount,outstanding_amount,emi,overdue_amount,dpd,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'ACTIVE') RETURNING *`,[
+    report.rows[0].id,String(req.body.lender||'').trim()||'Manual Entry',loanType,String(req.body.account_number_masked||'').trim()||'—',
+    req.body.sanctioned_amount===''||req.body.sanctioned_amount==null?null:Number(req.body.sanctioned_amount),
+    req.body.outstanding_amount===''||req.body.outstanding_amount==null?0:Number(req.body.outstanding_amount),
+    req.body.emi===''||req.body.emi==null?null:Number(req.body.emi),
+    req.body.overdue_amount===''||req.body.overdue_amount==null?0:Number(req.body.overdue_amount),
+    req.body.dpd===''||req.body.dpd==null?0:Number(req.body.dpd)
+  ]);
+  await audit(req,'APPROVED_CIBIL_OBLIGATION_ADDED','cibil_account',a.rows[0].id);
+  res.status(201).json({...a.rows[0],approved:true});
+});
 app.post('/api/cibil-accounts/:id/mark-closed',auth,async(req,res)=>{
   const current=await pool.query('SELECT a.*,r.customer_id,r.accepted_final FROM cibil_accounts a JOIN cibil_reports r ON r.id=a.report_id WHERE a.id=$1',[req.params.id]);
   if(!current.rows[0])return res.status(404).json({error:'CIBIL account not found'});
