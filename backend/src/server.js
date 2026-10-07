@@ -311,44 +311,6 @@ app.post('/api/customers/:customerId/whatsapp-update-link',auth,async(req,res)=>
   res.json({url,message,customer_phone:c.rows[0].phone||'',company_whatsapp_number:profile.whatsapp_number||''});
 });
 
-app.get('/api/company-profile',auth,requireAdmin,async(req,res)=>{
-  const r=await pool.query('SELECT id,phone,whatsapp_number,email,website,facebook_page,instagram_page,address,(logo_data IS NOT NULL) AS has_logo,logo_mime_type,updated_at FROM company_profile WHERE id=1');
-  const c=r.rows[0]||{id:1,phone:'',whatsapp_number:'',email:'',website:'',facebook_page:'',instagram_page:'',address:'',has_logo:false};
-  res.json({...c,logo_url:c.has_logo?'/api/company-profile/logo':null});
-});
-app.put('/api/company-profile',auth,requireAdmin,(req,res)=>{
-  upload.single('logo')(req,res,async err=>{
-    if(err)return res.status(400).json({error:err.message});
-    try{
-      const {phone='',whatsapp_number='',email='',website='',facebook_page='',instagram_page='',address=''}=req.body;
-      if(req.file && !String(req.file.mimetype||'').startsWith('image/'))return res.status(400).json({error:'Logo must be an image file.'});
-      const r=await pool.query(`
-        INSERT INTO company_profile(id,phone,whatsapp_number,email,website,facebook_page,instagram_page,address,logo_data,logo_mime_type,updated_at)
-        VALUES(1,$1,$2,$3,$4,$5,$6,$7,$8,$9,now())
-        ON CONFLICT(id) DO UPDATE SET phone=EXCLUDED.phone,whatsapp_number=EXCLUDED.whatsapp_number,email=EXCLUDED.email,website=EXCLUDED.website,facebook_page=EXCLUDED.facebook_page,instagram_page=EXCLUDED.instagram_page,address=EXCLUDED.address,
-          logo_data=CASE WHEN EXCLUDED.logo_data IS NOT NULL THEN EXCLUDED.logo_data ELSE company_profile.logo_data END,
-          logo_mime_type=CASE WHEN EXCLUDED.logo_data IS NOT NULL THEN EXCLUDED.logo_mime_type ELSE company_profile.logo_mime_type END,
-          updated_at=now()
-        RETURNING id,phone,whatsapp_number,email,website,facebook_page,instagram_page,address,(logo_data IS NOT NULL) AS has_logo,logo_mime_type,updated_at`,
-        [phone,whatsapp_number,email,website,facebook_page,instagram_page,address,req.file?req.file.buffer:null,req.file?req.file.mimetype:null]);
-      await audit(req,'COMPANY_PROFILE_UPDATED','company_profile','1');
-      res.json({...r.rows[0],logo_url:r.rows[0].has_logo?'/api/company-profile/logo':null});
-    }catch(e){console.error('[COMPANY PROFILE]',e);res.status(500).json({error:'Company profile update failed.'});}
-  });
-});
-app.get('/api/company-profile/logo',async(req,res)=>{
-  const r=await pool.query('SELECT logo_data,logo_mime_type FROM company_profile WHERE id=1');
-  if(!r.rows[0]?.logo_data)return res.status(404).end();
-  res.setHeader('Content-Type',r.rows[0].logo_mime_type||'image/png');
-  res.setHeader('Cache-Control','public, max-age=300');
-  res.end(r.rows[0].logo_data);
-});
-app.get('/api/public/company-profile',async(req,res)=>{
-  const r=await pool.query('SELECT phone,whatsapp_number,email,website,facebook_page,instagram_page,address,(logo_data IS NOT NULL) AS has_logo FROM company_profile WHERE id=1');
-  const c=r.rows[0]||{};
-  res.json({...c,logo_url:c.has_logo?'/api/company-profile/logo':null});
-});
-
 app.get('/api/customers',auth,async(req,res)=>{const ids=await visibleUserIds(req.user);const r=await pool.query('SELECT DISTINCT c.* FROM customers c LEFT JOIN leads l ON l.customer_id=c.id WHERE c.deleted_at IS NULL AND (l.assigned_to=ANY($1) OR l.assigned_to IS NULL) ORDER BY c.created_at DESC LIMIT 500',[ids]);res.json(r.rows)});
 app.get('/api/customers/:id',auth,async(req,res)=>{if(!await canAccessCustomer(req.user,req.params.id))return res.status(403).json({error:'You cannot access this customer'});const c=await pool.query('SELECT * FROM customers WHERE id=$1 AND deleted_at IS NULL',[req.params.id]);if(!c.rows[0])return res.status(404).json({error:'Customer not found'});const leads=await pool.query('SELECT l.*,u.name assigned_name FROM leads l LEFT JOIN users u ON u.id=l.assigned_to WHERE l.customer_id=$1 ORDER BY l.created_at DESC',[req.params.id]);const docs=await pool.query('SELECT id,document_type,original_name,mime_type,file_size,created_at FROM documents WHERE customer_id=$1 ORDER BY created_at DESC',[req.params.id]);const reports=await pool.query('SELECT id,original_name,file_size,score,total_outstanding,total_monthly_emi,total_overdue,max_dpd,summary,extraction_confidence,created_at,accepted_final,accepted_at FROM cibil_reports WHERE customer_id=$1 ORDER BY created_at DESC',[req.params.id]);const history=await pool.query('SELECT h.*,u.name changed_by_name FROM customer_change_history h LEFT JOIN users u ON u.id=h.changed_by WHERE h.customer_id=$1 ORDER BY h.created_at DESC',[req.params.id]);const applications=await pool.query("SELECT a.*,COALESCE(l2.name,l.name) lender_name,COALESCE(l2.commission_pct,l.commission_pct,0) lender_commission_pct,p.name product_name,u.name assigned_name FROM applications a LEFT JOIN lenders l2 ON l2.id=a.lender_id LEFT JOIN loan_products p ON p.id=a.product_id LEFT JOIN lenders l ON l.id=p.lender_id LEFT JOIN users u ON u.id=a.assigned_to WHERE a.customer_id=$1 ORDER BY a.created_at DESC",[req.params.id]);res.json({...c.rows[0],leads:leads.rows,documents:docs.rows,cibil_reports:reports.rows,change_history:history.rows,applications:applications.rows})});
 app.get('/api/customers/:id/history',auth,async(req,res)=>{if(!await canAccessCustomer(req.user,req.params.id))return res.status(403).json({error:'You cannot access this customer'});res.json((await pool.query('SELECT h.*,u.name changed_by_name FROM customer_change_history h LEFT JOIN users u ON u.id=h.changed_by WHERE h.customer_id=$1 ORDER BY h.created_at DESC',[req.params.id])).rows)});
@@ -513,42 +475,6 @@ app.post('/api/documents',auth,(req,res)=>{upload.single('file')(req,res,async e
 
 // Public customer details/document portal
 
-app.post('/api/customers/:customerId/whatsapp-update-link',auth,async(req,res)=>{
-  const ids=await visibleUserIds(req.user);
-  const c=await pool.query('SELECT c.id,c.name,c.phone FROM customers c WHERE c.deleted_at IS NULL AND c.id=$1 AND (EXISTS (SELECT 1 FROM leads l WHERE l.customer_id=c.id AND (l.assigned_to=ANY($2) OR l.assigned_to IS NULL)) OR $3=true)',[req.params.customerId,ids,isAdmin(req.user)]);
-   if(!c.rows[0])return res.status(403).json({error:'You cannot access this customer'});
-   const token=makeToken();
-   await pool.query('INSERT INTO customer_public_links(customer_id,token_hash,expires_at,created_by) VALUES($1,$2,now()+interval \'30 days\',$3) ON CONFLICT (customer_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,expires_at=EXCLUDED.expires_at,created_by=EXCLUDED.created_by,created_at=now()',[req.params.customerId,hashToken(token),req.user.id]);
-   const profile=(await pool.query('SELECT whatsapp_number FROM company_profile WHERE id=1')).rows[0]||{};
-   const url=`${(PUBLIC_BASE_URL||`${req.protocol}://${req.get('host')}`).replace(/\/$/,'')}/public/customer/${token}`;
-   const message=`Hello ${c.rows[0].name||''}, please update your details and upload the required documents here: ${url}`;
-   await audit(req,'WHATSAPP_UPDATE_LINK_CREATED','customer',req.params.customerId);
-   res.json({url,message,customer_phone:c.rows[0].phone||'',company_whatsapp_number:profile.whatsapp_number||''});
- });
-  const r=await pool.query('SELECT id,phone,whatsapp_number,email,website,facebook_page,instagram_page,address,(logo_data IS NOT NULL) AS has_logo,logo_mime_type,updated_at FROM company_profile WHERE id=1');
-  const c=r.rows[0]||{id:1,phone:'',whatsapp_number:'',email:'',website:'',facebook_page:'',instagram_page:'',address:'',has_logo:false};
-  res.json({...c,logo_url:c.has_logo?'/api/company-profile/logo':null});
-});
-app.put('/api/company-profile',auth,requireAdmin,(req,res)=>{
-  upload.single('logo')(req,res,async err=>{
-    if(err)return res.status(400).json({error:err.message});
-    try{
-      const {phone='',whatsapp_number='',email='',website='',facebook_page='',instagram_page='',address=''}=req.body;
-      if(req.file && !String(req.file.mimetype||'').startsWith('image/'))return res.status(400).json({error:'Logo must be an image file.'});
-      const r=await pool.query(`
-        INSERT INTO company_profile(id,phone,whatsapp_number,email,website,facebook_page,instagram_page,address,logo_data,logo_mime_type,updated_at)
-        VALUES(1,$1,$2,$3,$4,$5,$6,$7,$8,$9,now())
-        ON CONFLICT(id) DO UPDATE SET phone=EXCLUDED.phone,whatsapp_number=EXCLUDED.whatsapp_number,email=EXCLUDED.email,website=EXCLUDED.website,facebook_page=EXCLUDED.facebook_page,instagram_page=EXCLUDED.instagram_page,address=EXCLUDED.address,
-          logo_data=CASE WHEN EXCLUDED.logo_data IS NOT NULL THEN EXCLUDED.logo_data ELSE company_profile.logo_data END,
-          logo_mime_type=CASE WHEN EXCLUDED.logo_data IS NOT NULL THEN EXCLUDED.logo_mime_type ELSE company_profile.logo_mime_type END,
-          updated_at=now()
-        RETURNING id,phone,whatsapp_number,email,website,facebook_page,instagram_page,address,(logo_data IS NOT NULL) AS has_logo,logo_mime_type,updated_at`,
-        [phone,whatsapp_number,email,website,facebook_page,instagram_page,address,req.file?req.file.buffer:null,req.file?req.file.mimetype:null]);
-      await audit(req,'COMPANY_PROFILE_UPDATED','company_profile','1');
-      res.json({...r.rows[0],logo_url:r.rows[0].has_logo?'/api/company-profile/logo':null});
-    }catch(e){console.error('[COMPANY PROFILE]',e);res.status(500).json({error:'Company profile update failed.'});}
-  });
-});
 app.get('/api/company-profile/logo',async(req,res)=>{
   const r=await pool.query('SELECT logo_data,logo_mime_type FROM company_profile WHERE id=1');
   if(!r.rows[0]?.logo_data)return res.status(404).end();
