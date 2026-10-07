@@ -54,7 +54,7 @@ return <Modal title={`Customer Profile · ${show(data.name)||'Customer'}`} onClo
 function Leads({user}){const[view,setView]=useState('self'),[rows,setRows]=useState([]),[team,setTeam]=useState([]),[assignee,setAssignee]=useState('all'),[selected,setSelected]=useState(null),[err,setErr]=useState('');
 const load=()=>{const params=new URLSearchParams({view});if(view==='team'&&assignee&&assignee!=='all')params.set('assignee',assignee);return api('/api/leads?'+params.toString()).then(d=>setRows(asList(d))).catch(e=>setErr(e.message))};
 useEffect(()=>{load()},[view,assignee]);
-useEffect(()=>{let alive=true;api('/api/users/team').then(d=>{if(alive)setTeam(asList(d).filter(t=>t.id!==user.id)}).catch(()=>{if(alive)setTeam([])});return()=>{alive=false}},[]);
+useEffect(()=>{let alive=true;api('/api/users/team').then(d=>{if(alive)setTeam(asList(d).filter(t=>t.id!==user.id))}).catch(()=>{if(alive)setTeam([])});return()=>{alive=false}},[]);
 const choose=next=>{setErr('');setView(next);if(next!=='team')setAssignee('all')};
 const assign=async(id,target)=>{try{await api('/api/leads/'+id+'/assign',{method:'PATCH',body:JSON.stringify({assigned_to:target})});load()}catch(e){setErr(e.message)}};
 const sendWhatsApp=async(r)=>{try{const d=await api('/api/customers/'+r.customer_id+'/whatsapp-update-link',{method:'POST'});const phone=waPhone(r.phone);if(!d.company_whatsapp_number)throw Error('Please configure the company WhatsApp number in Company Profile first.');if(!phone)throw Error('Customer phone number is missing.');window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(d.message),'_blank')}catch(e){setErr(e.message)}};
