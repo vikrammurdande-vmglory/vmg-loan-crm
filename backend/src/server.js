@@ -138,7 +138,7 @@ SELECT u.id,u.name,u.email,u.role,u.monthly_cost,
  (SELECT count(*) FROM applications a WHERE a.assigned_to=u.id AND a.status='DISBURSED') AS disbursed_cases,
  (SELECT COALESCE(sum(COALESCE(a.disbursed_amount,0)*COALESCE(le.commission_pct,0)/100),0) FROM applications a LEFT JOIN lenders le ON le.id=a.lender_id WHERE a.assigned_to=u.id AND a.status='DISBURSED') AS associated_commission
 FROM users u
-WHERE u.active=true AND u.deleted_at IS NULL
+WHERE u.active=true AND u.deleted_at IS NULL AND UPPER(u.role)<>'SUPER_ADMIN'
 ORDER BY u.name`)).rows.map(r=>{const assigned=Number(r.assigned_leads)||0;const converted=Number(r.converted_leads)||0;const commission=Number(r.associated_commission)||0;const cost=Number(r.monthly_cost)||0;return {...r,assigned_leads:assigned,converted_leads:converted,assigned_applications:Number(r.assigned_applications)||0,disbursed_cases:Number(r.disbursed_cases)||0,associated_commission:commission,net_contribution:commission-cost,lead_conversion_ratio:assigned?Math.round(converted*10000/assigned)/100:0}});res.json(rows)}catch(e){console.error('[REPORT]',e);res.status(500).json({error:'User performance report could not be generated.'})}});
 // CIBIL
 app.get('/api/customers/:customerId/cibil-reports',auth,async(req,res)=>{if(!await canAccessCustomer(req.user,req.params.customerId))return res.status(403).json({error:'You cannot access this customer'});const r=await pool.query(`SELECT id,customer_id,application_id,report_date,original_name,file_size,score,total_outstanding,total_monthly_emi,total_overdue,max_dpd,summary,extraction_confidence,extraction_note,created_at,accepted_final,accepted_at,accepted_by FROM cibil_reports WHERE customer_id=$1 ORDER BY created_at DESC`,[req.params.customerId]);res.json(r.rows)});
