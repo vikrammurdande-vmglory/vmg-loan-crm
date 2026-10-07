@@ -72,3 +72,9 @@ header{display:flex;align-items:center;justify-content:space-between;gap:18px}
 .approved-obligations>.customer-obligation-group{margin:0;border-radius:0;border-left:0;border-right:0}
 /* Standard highlighted title treatment for nested profile panels */
 .profile-section h4{background:#f7f8fa;padding:10px 12px;margin:0;border-bottom:1px solid #e4e7ec}
+
+/* Project-wide section title standard */
+.panel>h3:first-child{margin:-1px -1px 14px;padding:12px 15px;background:#eef2f6;border-bottom:1px solid #d5dbe3;border-radius:11px 11px 0 0}
+.panel-heading{padding:12px 14px;background:#eef2f6;border-bottom:1px solid #d5dbe3;border-radius:10px 10px 0 0}
+.panel-heading h3{margin:2px 0 0}
+.page-intro{overflow:hidden}
