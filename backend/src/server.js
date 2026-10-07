@@ -298,6 +298,7 @@ app.post('/api/customers/:customerId/approved-obligations',auth,async(req,res)=>
     req.body.overdue_amount===''||req.body.overdue_amount==null?0:Number(req.body.overdue_amount),
     req.body.dpd===''||req.body.dpd==null?0:Number(req.body.dpd)
   ]);
+  await refreshAcceptedCibilSummary(report.rows[0].id);
   await audit(req,'APPROVED_CIBIL_OBLIGATION_ADDED','cibil_account',a.rows[0].id);
   res.status(201).json({...a.rows[0],approved:true});
 });
