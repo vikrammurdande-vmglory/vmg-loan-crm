@@ -78,3 +78,14 @@ header{display:flex;align-items:center;justify-content:space-between;gap:18px}
 .panel-heading{padding:12px 14px;background:#eef2f6;border-bottom:1px solid #d5dbe3;border-radius:10px 10px 0 0}
 .panel-heading h3{margin:2px 0 0}
 .page-intro{overflow:hidden}
+
+.document-download-link{display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;margin-top:4px;color:#155eef;background:#eef4ff;border:1px solid #c7d7fe;border-radius:7px;padding:6px 9px;font-size:12px;font-weight:700;text-decoration:none;cursor:pointer}
+.document-download-link:hover{background:#e0eaff;border-color:#98b5ff}
+.customer-obligation-editor{padding:14px 0;background:#f8fafc;border-top:1px solid #e4e7ec}
+.customer-obligation-editor .grid{margin:0 0 10px}
+.obligation-actions{white-space:nowrap}
+.obligation-actions button{margin:2px 3px 2px 0}
+.obligation-editor-row td{padding:0!important;background:#f8fafc}
+.cibil-obligation-table .obligation-editor-row:hover{background:#f8fafc}
+.cibil-profile-report .document-download-link{margin-left:6px}
+.report-chip .document-download-link{margin-left:6px;vertical-align:middle}
