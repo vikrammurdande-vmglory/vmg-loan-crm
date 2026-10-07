@@ -561,7 +561,15 @@ app.post('/api/documents',auth,(req,res)=>{upload.single('file')(req,res,async e
 app.post('/api/customers/:customerId/whatsapp-update-link',auth,async(req,res)=>{
   const ids=await visibleUserIds(req.user);
   const c=await pool.query('SELECT c.id,c.name,c.phone FROM customers c WHERE c.deleted_at IS NULL AND c.id=$1 AND (EXISTS (SELECT 1 FROM leads l WHERE l.customer_id=c.id AND (l.assigned_to=ANY($2) OR l.assigned_to IS NULL)) OR $3=true)',[req.params.customerId,ids,isAdmin(req.user)]);
-  if(!c.rows[0])return res.status(403).json({error:'You cannot access this customer'});+p.length)}return {where:w.join(' AND '),params:p}};
+   if(!c.rows[0])return res.status(403).json({error:'You cannot access this customer'});
+   const token=makeToken();
+   await pool.query('INSERT INTO customer_public_links(customer_id,token_hash,expires_at,created_by) VALUES($1,$2,now()+interval \'30 days\',$3) ON CONFLICT (customer_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,expires_at=EXCLUDED.expires_at,created_by=EXCLUDED.created_by,created_at=now()',[req.params.customerId,hashToken(token),req.user.id]);
+   const profile=(await pool.query('SELECT whatsapp_number FROM company_profile WHERE id=1')).rows[0]||{};
+   const url=`${(PUBLIC_BASE_URL||`${req.protocol}://${req.get('host')}`).replace(/\/$/,'')}/public/customer/${token}`;
+   const message=`Hello ${c.rows[0].name||''}, please update your details and upload the required documents here: ${url}`;
+   await audit(req,'WHATSAPP_UPDATE_LINK_CREATED','customer',req.params.customerId);
+   res.json({url,message,customer_phone:c.rows[0].phone||'',company_whatsapp_number:profile.whatsapp_number||''});
+ });
   const r=await pool.query('SELECT id,phone,whatsapp_number,email,website,facebook_page,instagram_page,address,(logo_data IS NOT NULL) AS has_logo,logo_mime_type,updated_at FROM company_profile WHERE id=1');
   const c=r.rows[0]||{id:1,phone:'',whatsapp_number:'',email:'',website:'',facebook_page:'',instagram_page:'',address:'',has_logo:false};
   res.json({...c,logo_url:c.has_logo?'/api/company-profile/logo':null});
