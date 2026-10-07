@@ -24,6 +24,12 @@ services:
       AWS_REGION: ${AWS_REGION}
       S3_BUCKET: ${S3_BUCKET}
       CIBIL_LOCAL_UPLOAD_DIR: /app/uploads/cibil
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
     volumes:
       - cibil_uploads:/app/uploads/cibil
     depends_on:
