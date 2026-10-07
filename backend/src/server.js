@@ -125,17 +125,13 @@ app.post('/api/applications',auth,async(req,res)=>{const b=req.body;if(!b.custom
 app.patch('/api/applications/:id',auth,async(req,res)=>{const {status,sanctioned_amount,disbursed_amount,remarks,assigned_to}=req.body;const existing=await pool.query('SELECT * FROM applications WHERE id=$1',[req.params.id]);if(!existing.rows[0])return res.status(404).json({error:'Application not found'});if(assigned_to!==undefined&&!await canAssignLeadTo(req.user,assigned_to))return res.status(403).json({error:'You cannot assign this application to that user'});const r=await pool.query('UPDATE applications SET status=COALESCE($1,status),sanctioned_amount=COALESCE($2,sanctioned_amount),disbursed_amount=COALESCE($3,disbursed_amount),remarks=COALESCE($4,remarks),assigned_to=COALESCE($5,assigned_to),updated_at=now() WHERE id=$6 RETURNING *',[status,sanctioned_amount,disbursed_amount,remarks,assigned_to,req.params.id]);res.json(r.rows[0])});
 app.get('/api/reports/user-performance',auth,requireAdmin,async(req,res)=>{try{const rows=(await pool.query(`
 SELECT u.id,u.name,u.email,u.role,u.monthly_cost,
- COUNT(DISTINCT l.id) AS assigned_leads,
- COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM applications ax WHERE ax.customer_id=l.customer_id) THEN l.id END) AS converted_leads,
- COUNT(DISTINCT a.id) AS assigned_applications,
- COUNT(DISTINCT CASE WHEN a.status='DISBURSED' THEN a.id END) AS disbursed_cases,
- COALESCE(SUM(CASE WHEN a.status='DISBURSED' THEN COALESCE(a.disbursed_amount,0)*COALESCE(le.commission_pct,0)/100 ELSE 0 END),0) AS associated_commission
+ (SELECT count(*) FROM leads l WHERE l.assigned_to=u.id) AS assigned_leads,
+ (SELECT count(*) FROM leads l WHERE l.assigned_to=u.id AND EXISTS (SELECT 1 FROM applications ax WHERE ax.customer_id=l.customer_id)) AS converted_leads,
+ (SELECT count(*) FROM applications a WHERE a.assigned_to=u.id) AS assigned_applications,
+ (SELECT count(*) FROM applications a WHERE a.assigned_to=u.id AND a.status='DISBURSED') AS disbursed_cases,
+ (SELECT COALESCE(sum(COALESCE(a.disbursed_amount,0)*COALESCE(le.commission_pct,0)/100),0) FROM applications a LEFT JOIN lenders le ON le.id=a.lender_id WHERE a.assigned_to=u.id AND a.status='DISBURSED') AS associated_commission
 FROM users u
-LEFT JOIN leads l ON l.assigned_to=u.id
-LEFT JOIN applications a ON a.assigned_to=u.id
-LEFT JOIN lenders le ON le.id=a.lender_id
 WHERE u.active=true AND u.deleted_at IS NULL
-GROUP BY u.id,u.name,u.email,u.role,u.monthly_cost
 ORDER BY u.name`)).rows.map(r=>{const assigned=Number(r.assigned_leads)||0;const converted=Number(r.converted_leads)||0;const commission=Number(r.associated_commission)||0;const cost=Number(r.monthly_cost)||0;return {...r,assigned_leads:assigned,converted_leads:converted,assigned_applications:Number(r.assigned_applications)||0,disbursed_cases:Number(r.disbursed_cases)||0,associated_commission:commission,net_contribution:commission-cost,lead_conversion_ratio:assigned?Math.round(converted*10000/assigned)/100:0}});res.json(rows)}catch(e){console.error('[REPORT]',e);res.status(500).json({error:'User performance report could not be generated.'})}});
 // CIBIL
 app.get('/api/customers/:customerId/cibil-reports',auth,async(req,res)=>{if(!await canAccessCustomer(req.user,req.params.customerId))return res.status(403).json({error:'You cannot access this customer'});const r=await pool.query(`SELECT id,customer_id,application_id,report_date,original_name,file_size,score,total_outstanding,total_monthly_emi,total_overdue,max_dpd,summary,extraction_confidence,extraction_note,created_at,accepted_final,accepted_at,accepted_by FROM cibil_reports WHERE customer_id=$1 ORDER BY created_at DESC`,[req.params.customerId]);res.json(r.rows)});
