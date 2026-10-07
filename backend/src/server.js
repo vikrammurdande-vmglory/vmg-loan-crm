@@ -234,6 +234,57 @@ app.post('/api/cibil-reports/:id/accounts',auth,async(req,res)=>{
   res.status(201).json(a.rows[0]);
 });
 
+async function refreshAcceptedCibilSummary(reportId){
+  const report=await pool.query('SELECT summary FROM cibil_reports WHERE id=$1 AND accepted_final=true',[reportId]);
+  if(!report.rows[0])return;
+  const accounts=(await pool.query('SELECT * FROM cibil_accounts WHERE report_id=$1 ORDER BY created_at ASC',[reportId])).rows;
+  const open=accounts.filter(a=>String(a.status||'').toUpperCase()==='ACTIVE');
+  const closed=accounts.filter(a=>String(a.status||'').toUpperCase()!=='ACTIVE');
+  const isCard=a=>/credit\s*card/i.test(String(a.loan_type||''));
+  const openCards=open.filter(isCard).length;
+  const closedCards=closed.filter(isCard).length;
+  const totalSanctioned=open.reduce((n,a)=>n+Number(a.sanctioned_amount||0),0);
+  const totalOutstanding=open.reduce((n,a)=>n+Number(a.outstanding_amount||0),0);
+  const totalEmi=open.reduce((n,a)=>n+Number(a.emi||0),0);
+  const totalOverdue=open.reduce((n,a)=>n+Number(a.overdue_amount||0),0);
+  const maxDpd=open.reduce((n,a)=>Math.max(n,Number(a.dpd||0)),0);
+  const totalCreditCardLimit=open.filter(isCard).reduce((n,a)=>n+Number(a.sanctioned_amount||0),0);
+  const accountCounts={
+    open_accounts:open.length,
+    closed_accounts:closed.length,
+    open_credit_cards:openCards,
+    open_loans:open.length-openCards,
+    closed_credit_cards:closedCards,
+    closed_loans:closed.length-closedCards,
+    total_credit_cards:openCards+closedCards,
+    total_loans:accounts.length-openCards-closedCards
+  };
+  const summary={
+    ...(report.rows[0].summary||{}),
+    accounts,
+    active_accounts:open,
+    open_accounts:open.length,
+    closed_accounts:closed.length,
+    open_credit_cards:openCards,
+    open_loans:open.length-openCards,
+    closed_credit_cards:closedCards,
+    closed_loans_count:closed.length-closedCards,
+    total_credit_cards:accountCounts.total_credit_cards,
+    total_loans:accountCounts.total_loans,
+    total_sanctioned_amount:totalSanctioned||null,
+    total_credit_card_limit:totalCreditCardLimit||null,
+    total_outstanding:totalOutstanding||null,
+    total_outstanding_amount:totalOutstanding||null,
+    total_monthly_emi:totalEmi||null,
+    total_overdue:totalOverdue,
+    max_dpd:maxDpd,
+    current_dpd:maxDpd,
+    active_credit_cards:openCards,
+    account_counts:accountCounts
+  };
+  await pool.query('UPDATE cibil_reports SET total_outstanding=$1,total_monthly_emi=$2,total_overdue=$3,max_dpd=$4,summary=$5 WHERE id=$6',[totalOutstanding||null,totalEmi||null,totalOverdue,maxDpd,JSON.stringify(summary),reportId]);
+}
+
 app.post('/api/customers/:customerId/approved-obligations',auth,async(req,res)=>{
   if(!await canAccessCustomer(req.user,req.params.customerId))return res.status(403).json({error:'You cannot access this customer'});
   const report=await pool.query('SELECT * FROM cibil_reports WHERE customer_id=$1 AND accepted_final=true ORDER BY accepted_at DESC NULLS LAST,created_at DESC LIMIT 1',[req.params.customerId]);  if(!report.rows[0])return res.status(409).json({error:'An approved CIBIL report is required before adding an approved obligation.'});
@@ -249,6 +300,45 @@ app.post('/api/customers/:customerId/approved-obligations',auth,async(req,res)=>
   ]);
   await audit(req,'APPROVED_CIBIL_OBLIGATION_ADDED','cibil_account',a.rows[0].id);
   res.status(201).json({...a.rows[0],approved:true});
+});
+app.patch('/api/customers/:customerId/approved-obligations/:id',auth,async(req,res)=>{
+  if(!await canAccessCustomer(req.user,req.params.customerId))return res.status(403).json({error:'You cannot access this customer'});
+  const current=await pool.query('SELECT a.*,r.customer_id,r.accepted_final FROM cibil_accounts a JOIN cibil_reports r ON r.id=a.report_id WHERE a.id=$1 AND r.customer_id=$2',[req.params.id,req.params.customerId]);
+  if(!current.rows[0])return res.status(404).json({error:'Approved CIBIL obligation not found'});
+  if(!current.rows[0].accepted_final)return res.status(409).json({error:'This obligation is not part of an accepted CIBIL report.'});
+  const allowed=['lender','loan_type','account_number_masked','sanctioned_amount','outstanding_amount','emi','overdue_amount','dpd'];
+  const fields=[];const values=[];
+  for(const key of allowed){
+    if(Object.prototype.hasOwnProperty.call(req.body||{},key)){
+      const raw=req.body[key];
+      if(['sanctioned_amount','outstanding_amount','emi','overdue_amount','dpd'].includes(key)){
+        if(raw!==null&&raw!==''&&!Number.isFinite(Number(raw)))return res.status(400).json({error:`Invalid value for ${key}`});
+        fields.push(`${key}=${values.length+1}`);
+        values.push(raw===null||raw===''?null:Number(raw));
+      }else{
+        const value=String(raw??'').trim();
+        if(['lender','loan_type'].includes(key)&&!value)return res.status(400).json({error:`${key==='loan_type'?'Loan type':'Lender'} is required`});
+        fields.push(`${key}=${values.length+1}`);
+        values.push(value||null);
+      }
+    }
+  }
+  if(!fields.length)return res.status(400).json({error:'No editable obligation fields supplied'});
+  values.push(req.params.id);
+  const updated=await pool.query(`UPDATE cibil_accounts SET ${fields.join(',')},status='ACTIVE' WHERE id=${values.length} RETURNING *`,values);
+  await refreshAcceptedCibilSummary(current.rows[0].report_id);
+  await audit(req,'APPROVED_CIBIL_OBLIGATION_UPDATED','cibil_account',req.params.id);
+  res.json({...updated.rows[0],approved:true});
+});
+app.delete('/api/customers/:customerId/approved-obligations/:id',auth,async(req,res)=>{
+  if(!await canAccessCustomer(req.user,req.params.customerId))return res.status(403).json({error:'You cannot access this customer'});
+  const current=await pool.query('SELECT a.*,r.customer_id,r.accepted_final FROM cibil_accounts a JOIN cibil_reports r ON r.id=a.report_id WHERE a.id=$1 AND r.customer_id=$2',[req.params.id,req.params.customerId]);
+  if(!current.rows[0])return res.status(404).json({error:'Approved CIBIL obligation not found'});
+  if(!current.rows[0].accepted_final)return res.status(409).json({error:'This obligation is not part of an accepted CIBIL report.'});
+  await pool.query('DELETE FROM cibil_accounts WHERE id=$1',[req.params.id]);
+  await refreshAcceptedCibilSummary(current.rows[0].report_id);
+  await audit(req,'APPROVED_CIBIL_OBLIGATION_DELETED','cibil_account',req.params.id);
+  res.json({ok:true,id:req.params.id});
 });
 app.post('/api/cibil-accounts/:id/mark-closed',auth,async(req,res)=>{
   const current=await pool.query('SELECT a.*,r.customer_id,r.accepted_final FROM cibil_accounts a JOIN cibil_reports r ON r.id=a.report_id WHERE a.id=$1',[req.params.id]);
@@ -286,12 +376,12 @@ app.post('/api/cibil-reports/:id/accept',auth,async(req,res)=>{
 });
 
 app.delete('/api/cibil-reports/:id',auth,requireManagerOrAdmin,async(req,res)=>{const r=await pool.query('SELECT object_key,customer_id FROM cibil_reports WHERE id=$1',[req.params.id]);if(!r.rows[0])return res.status(404).json({error:'CIBIL report not found'});if(!await canAccessCustomer(req.user,r.rows[0].customer_id))return res.status(403).json({error:'You cannot access this customer'});try{if(s3&&r.rows[0].object_key)await s3.send(new DeleteObjectCommand({Bucket:process.env.S3_BUCKET,Key:r.rows[0].object_key}));else if(r.rows[0].object_key&&fs.existsSync(r.rows[0].object_key))fs.unlinkSync(r.rows[0].object_key)}catch(e){console.error('[CIBIL DELETE STORAGE]',e.message)}await pool.query('DELETE FROM cibil_reports WHERE id=$1',[req.params.id]);if(r.rows[0].object_key)await pool.query('DELETE FROM documents WHERE object_key=$1',[r.rows[0].object_key]);await audit(req,'CIBIL_REPORT_DELETED','cibil_report',req.params.id);res.json({ok:true})});
-app.get('/api/cibil-reports/:id/file',async(req,res,next)=>{if(!req.headers.authorization&&req.query.access_token)req.headers.authorization='Bearer '+req.query.access_token;return auth(req,res,next)},async(req,res)=>{const r=await pool.query('SELECT object_key,original_name,mime_type,customer_id FROM cibil_reports WHERE id=$1',[req.params.id]);if(!r.rows[0])return res.status(404).json({error:'CIBIL report not found'});const f=r.rows[0];if(!await canAccessCustomer(req.user,f.customer_id))return res.status(403).json({error:'You cannot access this customer'});res.setHeader('Content-Type',f.mime_type||'application/pdf');res.setHeader('Content-Disposition',`inline; filename="${String(f.original_name||'cibil-report.pdf').replace(/"/g,'')}"`);if(s3){const obj=await s3.send(new GetObjectCommand({Bucket:process.env.S3_BUCKET,Key:f.object_key}));obj.Body.pipe(res)}else{if(!fs.existsSync(f.object_key))return res.status(404).json({error:'Stored report file not found'});fs.createReadStream(f.object_key).pipe(res)}});
+app.get('/api/cibil-reports/:id/file',async(req,res,next)=>{if(!req.headers.authorization&&req.query.access_token)req.headers.authorization='Bearer '+req.query.access_token;return auth(req,res,next)},async(req,res)=>{const r=await pool.query('SELECT object_key,original_name,mime_type,customer_id FROM cibil_reports WHERE id=$1',[req.params.id]);if(!r.rows[0])return res.status(404).json({error:'CIBIL report not found'});const f=r.rows[0];if(!await canAccessCustomer(req.user,f.customer_id))return res.status(403).json({error:'You cannot access this customer'});res.setHeader('Content-Type',f.mime_type||'application/pdf');const disposition=req.query.download==='1'?'attachment':'inline';res.setHeader('Content-Disposition',`${disposition}; filename="${String(f.original_name||'cibil-report.pdf').replace(/"/g,'')}"`);if(s3){const obj=await s3.send(new GetObjectCommand({Bucket:process.env.S3_BUCKET,Key:f.object_key}));obj.Body.pipe(res)}else{if(!fs.existsSync(f.object_key))return res.status(404).json({error:'Stored report file not found'});fs.createReadStream(f.object_key).pipe(res)}});
 app.post('/api/customers/:customerId/cibil-reports',auth,(req,res)=>{upload.single('file')(req,res,async(err)=>{if(err)return res.status(err.code==='LIMIT_FILE_SIZE'?413:400).json({error:err.code==='LIMIT_FILE_SIZE'?'CIBIL PDF exceeds the 10 MB upload limit.':err.message});try{if(!req.file)return res.status(400).json({error:'CIBIL PDF file is required'});if(req.file.mimetype!=='application/pdf'&&!req.file.originalname.toLowerCase().endsWith('.pdf'))return res.status(400).json({error:'Only PDF files are accepted'});if(!await canAccessCustomer(req.user,req.params.customerId))return res.status(403).json({error:'You cannot access this customer'});const customer=await pool.query('SELECT id FROM customers WHERE id=$1',[req.params.customerId]);if(!customer.rows[0])return res.status(404).json({error:'Customer not found'});let parsed;try{parsed=await pdfParse(req.file.buffer)}catch(e){return res.status(422).json({error:'Unable to read PDF. The file may be damaged, encrypted, or unsupported.'})}let analysis;try{analysis=analyzeCibilText(parsed.text||'')}catch(e){return res.status(422).json({error:'CIBIL analysis failed while extracting the report.',detail:e.message})}if((analysis.extraction_confidence||0)<20)return res.status(422).json({error:'The PDF appears to contain little or no extractable text. Please upload a text-based CIBIL PDF or enable OCR processing.',analysis});const safeName=`${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g,'_')}`;let objectKey;if(s3){objectKey=`cibil-reports/${req.params.customerId}/${safeName}`;await s3.send(new PutObjectCommand({Bucket:process.env.S3_BUCKET,Key:objectKey,Body:req.file.buffer,ContentType:'application/pdf',ServerSideEncryption:'AES256'}))}else{objectKey=path.join(localUploadDir,`${req.params.customerId}-${safeName}`);fs.writeFileSync(objectKey,req.file.buffer)}const client=await pool.connect();let r,stored;try{await client.query('BEGIN');r=await client.query(`INSERT INTO cibil_reports(customer_id,application_id,uploaded_by,report_date,original_name,mime_type,object_key,file_size,score,total_outstanding,total_monthly_emi,total_overdue,max_dpd,summary,extraction_confidence,extraction_note) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,[req.params.customerId,req.body.application_id||null,req.user.id,req.body.report_date||null,req.file.originalname,'application/pdf',objectKey,req.file.size,analysis.score,analysis.total_outstanding,analysis.total_monthly_emi,analysis.total_overdue,analysis.max_dpd,JSON.stringify(analysis),analysis.extraction_confidence,analysis.extraction_note]);stored=await persistParsedCibilAccounts(client,r.rows[0].id,analysis);await client.query('COMMIT')}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}await audit(req,'CIBIL_REPORT_UPLOADED','cibil_report',r.rows[0].id);res.status(201).json({...r.rows[0],summary:analysis,accounts:stored})}catch(e){console.error('[CIBIL]',e);res.status(500).json({error:'CIBIL report processing failed.',detail:e.message})}})});
 
 // Documents
 app.get('/api/customers/:customerId/documents',auth,async(req,res)=>{if(!await canAccessCustomer(req.user,req.params.customerId))return res.status(403).json({error:'You cannot access this customer'});return res.json((await pool.query('SELECT id,customer_id,document_type,original_name,mime_type,file_size,created_at FROM documents WHERE customer_id=$1 ORDER BY created_at DESC',[req.params.customerId])).rows)});
-app.get('/api/documents/:id/file',async(req,res,next)=>{if(!req.headers.authorization&&req.query.access_token)req.headers.authorization='Bearer '+req.query.access_token;return auth(req,res,next)},async(req,res)=>{const r=await pool.query('SELECT * FROM documents WHERE id=$1',[req.params.id]);if(!r.rows[0])return res.status(404).json({error:'Document not found'});if(!await canAccessCustomer(req.user,r.rows[0].customer_id))return res.status(403).json({error:'You cannot access this customer'});const f=r.rows[0];res.setHeader('Content-Type',f.mime_type||'application/octet-stream');res.setHeader('Content-Disposition',`inline; filename="${String(f.original_name||'document').replace(/"/g,'')}"`);if(s3){const obj=await s3.send(new GetObjectCommand({Bucket:process.env.S3_BUCKET,Key:f.object_key}));obj.Body.pipe(res)}else{if(!fs.existsSync(f.object_key))return res.status(404).json({error:'Stored document not found'});fs.createReadStream(f.object_key).pipe(res)}});
+app.get('/api/documents/:id/file',async(req,res,next)=>{if(!req.headers.authorization&&req.query.access_token)req.headers.authorization='Bearer '+req.query.access_token;return auth(req,res,next)},async(req,res)=>{const r=await pool.query('SELECT * FROM documents WHERE id=$1',[req.params.id]);if(!r.rows[0])return res.status(404).json({error:'Document not found'});if(!await canAccessCustomer(req.user,r.rows[0].customer_id))return res.status(403).json({error:'You cannot access this customer'});const f=r.rows[0];res.setHeader('Content-Type',f.mime_type||'application/octet-stream');const disposition=req.query.download==='1'?'attachment':'inline';res.setHeader('Content-Disposition',`${disposition}; filename="${String(f.original_name||'document').replace(/"/g,'')}"`);if(s3){const obj=await s3.send(new GetObjectCommand({Bucket:process.env.S3_BUCKET,Key:f.object_key}));obj.Body.pipe(res)}else{if(!fs.existsSync(f.object_key))return res.status(404).json({error:'Stored document not found'});fs.createReadStream(f.object_key).pipe(res)}});
 app.post('/api/documents',auth,(req,res)=>{upload.single('file')(req,res,async err=>{if(err)return res.status(400).json({error:err.message});try{if(!req.file)return res.status(400).json({error:'File required'});const customerId=req.body.customer_id||null;if(!customerId)return res.status(400).json({error:'Customer is required'});if(!await canAccessCustomer(req.user,customerId))return res.status(403).json({error:'You cannot access this customer'});const keyName=`${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g,'_')}`;let key;if(s3){key=`documents/${customerId}/${keyName}`;await s3.send(new PutObjectCommand({Bucket:process.env.S3_BUCKET,Key:key,Body:req.file.buffer,ContentType:req.file.mimetype,ServerSideEncryption:'AES256'}))}else{key=path.join(localUploadDir,`${customerId}-${keyName}`);fs.writeFileSync(key,req.file.buffer)}const r=await pool.query('INSERT INTO documents(customer_id,application_id,document_type,object_key,original_name,mime_type,file_size) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,customer_id,document_type,original_name,mime_type,file_size,created_at',[customerId,req.body.application_id||null,req.body.document_type||'OTHER',key,req.file.originalname,req.file.mimetype,req.file.size]);await audit(req,'DOCUMENT_UPLOADED','document',r.rows[0].id);res.status(201).json(r.rows[0])}catch(e){console.error(e);res.status(500).json({error:'Document upload failed'})}})});
 
 // Public customer details/document portal
