@@ -41,7 +41,6 @@ const hashToken=t=>crypto.createHash('sha256').update(t).digest('hex');
 const makeToken=()=>crypto.randomBytes(32).toString('hex');
 
 const CIBIL_PARSER_VERSION='parser-v14-cibil-sanctioned-balance-emi';
-const startupMigrations=async()=>{await pool.query("ALTER TABLE applications ADD COLUMN IF NOT EXISTS application_type TEXT");await pool.query("ALTER TABLE applications ADD COLUMN IF NOT EXISTS lender_id UUID REFERENCES lenders(id)")};
 
 
 async function activeUsers(){return (await pool.query("SELECT id,name,email,role,manager_id,active FROM users WHERE active=true AND deleted_at IS NULL ORDER BY name")).rows}
@@ -287,6 +286,8 @@ async function ensureSchema(){
   await pool.query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS deleted_by UUID REFERENCES users(id) ON DELETE SET NULL`);
   await pool.query(`CREATE TABLE IF NOT EXISTS customer_change_history (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,changed_by UUID REFERENCES users(id) ON DELETE SET NULL,action TEXT NOT NULL DEFAULT 'UPDATED',changes JSONB NOT NULL DEFAULT '{}'::jsonb,before_data JSONB,after_data JSONB,created_at TIMESTAMPTZ DEFAULT now())`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_customer_change_history_customer ON customer_change_history(customer_id,created_at DESC)`);
+  await pool.query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS application_type TEXT`);
+  await pool.query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS lender_id UUID REFERENCES lenders(id)`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS assignment_status TEXT NOT NULL DEFAULT 'UNASSIGNED'`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'NEW LEAD'`);
   await pool.query(`CREATE TABLE IF NOT EXISTS lead_comments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,user_id UUID REFERENCES users(id),comment TEXT,stage TEXT,created_at TIMESTAMPTZ DEFAULT now())`);
