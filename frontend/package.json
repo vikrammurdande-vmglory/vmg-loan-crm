@@ -1,0 +1,1 @@
+{"type":"module","scripts":{"build":"vite build","dev":"vite --host 0.0.0.0","test:ui-data":"node test-ui-data.mjs"},"dependencies":{"@vitejs/plugin-react":"latest","vite":"latest","react":"latest","react-dom":"latest"},"devDependencies":{}}

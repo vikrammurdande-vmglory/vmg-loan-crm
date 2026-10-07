@@ -1,0 +1,135 @@
+function cleanText(text) {
+  return text.replace(/\u00a0/g, ' ').replace(/\r/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n').trim();
+}
+
+function numberValue(value) {
+  if (value === undefined || value === null) return null;
+  const s = String(value).replace(/[,₹Rs. ]/gi, '').trim();
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function firstNumber(text, patterns) {
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) {
+      const n = numberValue(m[1]);
+      if (n !== null) return n;
+    }
+  }
+  return null;
+}
+
+function firstMatch(text, patterns) {
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
+function parseAccounts(lines) {
+  const accounts = [];
+  const loanWords = /(personal|home|housing|business|vehicle|auto|car|education|gold|consumer|loan|credit card|overdraft|od)/i;
+  const money = /(?:₹|rs\.?\s*)?([0-9][0-9,]*(?:\.\d+)?)/gi;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!loanWords.test(line) || line.length > 180) continue;
+    const window = lines.slice(i, i + 5).join(' | ');
+    const type = firstMatch(window, [
+      /(personal loan)/i, /(home loan|housing loan)/i, /(business loan)/i,
+      /(loan against property|lap)/i, /(vehicle loan|auto loan|car loan)/i,
+      /(education loan)/i, /(gold loan)/i, /(credit card)/i, /(consumer loan)/i,
+      /(overdraft|cash credit)/i
+    ]);
+    const lender = line.replace(/(?:personal|home|housing|business|vehicle|auto|car|education|gold|consumer|loan|credit card|overdraft|od)/ig, ' ').replace(/[|:,-]+/g, ' ').trim();
+    const nums = [...window.matchAll(money)].map(m => numberValue(m[1])).filter(v => v !== null);
+    const outstanding = firstNumber(window, [/(?:current balance|outstanding balance|current outstanding)\s*[:\-]?\s*(?:₹|rs\.?\s*)?([0-9,]+(?:\.\d+)?)/i]);
+    const emi = firstNumber(window, [/(?:emi|installment|monthly instalment|monthly installment)\s*[:\-]?\s*(?:₹|rs\.?\s*)?([0-9,]+(?:\.\d+)?)/i]);
+    const overdue = firstNumber(window, [/(?:amount overdue|overdue amount|overdue)\s*[:\-]?\s*(?:₹|rs\.?\s*)?([0-9,]+(?:\.\d+)?)/i]);
+    const dpd = firstNumber(window, [/(?:dpd|days past due)\s*[:\-]?\s*(\d{1,3})/i]);
+    if (type || outstanding !== null || emi !== null || overdue !== null || dpd !== null) {
+      accounts.push({ lender: lender || 'Unknown lender', loan_type: type || 'Other', outstanding_amount: outstanding ?? nums[0] ?? null, emi: emi, overdue_amount: overdue ?? 0, dpd: dpd ?? 0, raw_excerpt: window.slice(0, 1000) });
+    }
+  }
+  return accounts.slice(0, 100);
+}
+
+function analyzeCibilText(rawText) {
+  const text = cleanText(rawText);
+  const lines = text.split('\n').map(x => x.trim()).filter(Boolean);
+
+  const score = firstNumber(text, [
+    /cibil\s*score\s*[:\-]?\s*(\d{3})/i,
+    /credit\s*score\s*[:\-]?\s*(\d{3})/i,
+    /score\s*[:\-]?\s*(\d{3})/i
+  ]);
+  const activeLoans = firstNumber(text, [/(?:active accounts|active loan accounts|number of active accounts)\s*[:\-]?\s*(\d+)/i]);
+  const closedLoans = firstNumber(text, [/(?:closed accounts|closed loan accounts|number of closed accounts)\s*[:\-]?\s*(\d+)/i]);
+  const totalAccounts = firstNumber(text, [/(?:total accounts|total number of accounts|accounts reported)\s*[:\-]?\s*(\d+)/i]);
+  const totalOutstanding = firstNumber(text, [
+    /(?:total current balance|total outstanding|total current outstanding|total balance)\s*[:\-]?\s*(?:₹|rs\.?\s*)?([0-9,]+(?:\.\d+)?)/i
+  ]);
+  const totalSanctioned = firstNumber(text, [/(?:total sanctioned amount|total sanctioned|total loan amount)\s*[:\-]?\s*(?:₹|rs\.?\s*)?([0-9,]+(?:\.\d+)?)/i]);
+  const totalEmi = firstNumber(text, [/(?:total emi|total monthly installment|total monthly instalment|total installment)\s*[:\-]?\s*(?:₹|rs\.?\s*)?([0-9,]+(?:\.\d+)?)/i]);
+  const totalOverdue = firstNumber(text, [/(?:total amount overdue|total overdue|amount overdue)\s*[:\-]?\s*(?:₹|rs\.?\s*)?([0-9,]+(?:\.\d+)?)/i]);
+  const maxDpd = firstNumber(text, [/(?:maximum dpd|max dpd|highest dpd)\s*[:\-]?\s*(\d{1,3})/i]);
+  const currentDpd = firstNumber(text, [/(?:current dpd|current days past due)\s*[:\-]?\s*(\d{1,3})/i]);
+  const cards = firstNumber(text, [/(?:active credit cards|credit cards|number of credit cards)\s*[:\-]?\s*(\d+)/i]);
+  const cardOutstanding = firstNumber(text, [/(?:credit card outstanding|card outstanding|total credit card balance)\s*[:\-]?\s*(?:₹|rs\.?\s*)?([0-9,]+(?:\.\d+)?)/i]);
+  const cardUtil = firstNumber(text, [/(?:credit card utilization|credit utilisation|card utilization)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*%?/i]);
+  const enquiries = firstNumber(text, [/(?:recent enquiries|recent inquiries|number of enquiries|number of inquiries|enquiries in last 6 months|inquiries in last 6 months)\s*[:\-]?\s*(\d+)/i]);
+  const settled = firstNumber(text, [/(?:settled accounts|accounts settled)\s*[:\-]?\s*(\d+)/i]);
+  const writtenOff = firstNumber(text, [/(?:written off accounts|written-off accounts|accounts written off)\s*[:\-]?\s*(\d+)/i]);
+  const oldestAccount = firstMatch(text, [/(?:oldest account|credit history since|oldest credit account)\s*[:\-]?\s*([^\n]+)/i]);
+
+  const accounts = parseAccounts(lines);
+  const derivedOutstanding = totalOutstanding ?? (accounts.reduce((s, a) => s + (a.outstanding_amount || 0), 0) || null);
+  const derivedEmi = totalEmi ?? (accounts.reduce((s, a) => s + (a.emi || 0), 0) || null);
+  const derivedOverdue = totalOverdue ?? (accounts.reduce((s, a) => s + (a.overdue_amount || 0), 0) || 0);
+  const derivedMaxDpd = maxDpd ?? accounts.reduce((m, a) => Math.max(m, a.dpd || 0), 0);
+  const redFlags = [];
+  if (derivedOverdue > 0) redFlags.push({severity:'HIGH',code:'OVERDUE',message:'Overdue amount is reported.'});
+  if ((currentDpd || 0) > 0 || derivedMaxDpd > 0) redFlags.push({severity:'HIGH',code:'DPD',message:`DPD detected; maximum observed is ${derivedMaxDpd} days.`});
+  if ((settled || 0) > 0) redFlags.push({severity:'HIGH',code:'SETTLED',message:'Settled account(s) reported.'});
+  if ((writtenOff || 0) > 0) redFlags.push({severity:'HIGH',code:'WRITTEN_OFF',message:'Written-off account(s) reported.'});
+  if (cardUtil !== null && cardUtil >= 80) redFlags.push({severity:'MEDIUM',code:'CARD_UTILIZATION',message:`Credit-card utilization is ${cardUtil}%.`});
+  if (enquiries !== null && enquiries >= 5) redFlags.push({severity:'MEDIUM',code:'RECENT_ENQUIRIES',message:`${enquiries} recent credit enquiries detected.`});
+  if (derivedOverdue === 0 && derivedMaxDpd === 0 && (settled || 0) === 0 && (writtenOff || 0) === 0) redFlags.push({severity:'LOW',code:'CLEAN_REPAYMENT',message:'No current overdue, DPD, settlement or write-off indicators were detected from extracted fields.'});
+
+  let assessment = 'REVIEW';
+  if (score !== null && score >= 750 && derivedOverdue === 0 && derivedMaxDpd === 0 && (settled || 0) === 0 && (writtenOff || 0) === 0) assessment = 'LOWER_OBSERVED_RISK';
+  else if ((derivedOverdue > 0) || derivedMaxDpd > 30 || (writtenOff || 0) > 0) assessment = 'HIGHER_OBSERVED_RISK';
+
+  const extractedFieldCount = [score,activeLoans,closedLoans,totalAccounts,derivedOutstanding,totalSanctioned,derivedEmi,derivedOverdue,derivedMaxDpd,cards,cardOutstanding,cardUtil,enquiries,settled,writtenOff].filter(v => v !== null).length;
+  const confidence = Math.round((extractedFieldCount / 15) * 100);
+
+  return {
+    report_version: 'parser-v1',
+    score,
+    active_loans: activeLoans ?? (accounts.filter(a => /active/i.test(a.raw_excerpt || '')).length || null),
+    closed_loans: closedLoans,
+    total_accounts: totalAccounts,
+    total_outstanding: derivedOutstanding,
+    total_sanctioned: totalSanctioned,
+    total_monthly_emi: derivedEmi,
+    total_overdue: derivedOverdue,
+    max_dpd: derivedMaxDpd,
+    current_dpd: currentDpd,
+    active_credit_cards: cards,
+    card_outstanding: cardOutstanding,
+    card_utilization_pct: cardUtil,
+    recent_enquiries: enquiries,
+    settled_accounts: settled,
+    written_off_accounts: writtenOff,
+    oldest_account: oldestAccount,
+    accounts,
+    red_flags: redFlags,
+    assessment,
+    extraction_confidence: confidence,
+    extraction_note: text.length < 500 ? 'Very little text was extracted. The PDF may be scanned/image-only and should be reviewed or processed with OCR.' : null
+  };
+}
+
+module.exports = { analyzeCibilText };

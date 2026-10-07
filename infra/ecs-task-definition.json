@@ -1,0 +1,7 @@
+{
+  "family":"loan-crm-api",
+  "networkMode":"awsvpc",
+  "requiresCompatibilities":["FARGATE"],
+  "cpu":"512","memory":"1024",
+  "containerDefinitions":[{"name":"api","image":"ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com/loan-crm-api:latest","essential":true,"portMappings":[{"containerPort":5000}],"environment":[{"name":"PORT","value":"5000"},{"name":"AWS_REGION","value":"ap-south-1"},{"name":"DATABASE_URL","value":"REPLACE_WITH_SECRETS_MANAGER_REFERENCE"},{"name":"JWT_SECRET","value":"REPLACE_WITH_SECRETS_MANAGER_REFERENCE"},{"name":"S3_BUCKET","value":"REPLACE_ME"}]}]
+}
