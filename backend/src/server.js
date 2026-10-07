@@ -288,6 +288,7 @@ app.use((e,req,res,next)=>{console.error('[API ERROR]',e);if(res.headersSent)ret
 async function ensureSchema(){
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_cost NUMERIC(14,2) NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'TEAM_MEMBER'`);
   await pool.query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS mother_maiden_name TEXT`);
   await pool.query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS spouse_name TEXT`);
@@ -297,6 +298,7 @@ async function ensureSchema(){
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_customer_change_history_customer ON customer_change_history(customer_id,created_at DESC)`);
   await pool.query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS application_type TEXT`);
   await pool.query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS lender_id UUID REFERENCES lenders(id)`);
+  await pool.query(`ALTER TABLE lenders ADD COLUMN IF NOT EXISTS commission_pct NUMERIC(6,3) NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS assignment_status TEXT NOT NULL DEFAULT 'UNASSIGNED'`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'NEW LEAD'`);
   await pool.query(`CREATE TABLE IF NOT EXISTS lead_comments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,user_id UUID REFERENCES users(id),comment TEXT,stage TEXT,created_at TIMESTAMPTZ DEFAULT now())`);
