@@ -4,7 +4,6 @@ COPY package*.json ./
 RUN npm install
 COPY src ./src
 COPY test-ui-data.mjs ./test-ui-data.mjs
-COPY test ./test
 RUN node test-ui-data.mjs
 COPY . .
 RUN npm run build
