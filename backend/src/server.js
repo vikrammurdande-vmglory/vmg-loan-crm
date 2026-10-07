@@ -475,6 +475,7 @@ app.post('/api/documents',auth,(req,res)=>{upload.single('file')(req,res,async e
 
 // Public customer details/document portal
 
+app.get('/api/public/company-profile',async(req,res)=>{
   const r=await pool.query('SELECT phone,whatsapp_number,email,website,facebook_page,instagram_page,address,(logo_data IS NOT NULL) AS has_logo FROM company_profile WHERE id=1');
   const c=r.rows[0]||{};
   res.json({...c,logo_url:c.has_logo?'/api/company-profile/logo':null});
