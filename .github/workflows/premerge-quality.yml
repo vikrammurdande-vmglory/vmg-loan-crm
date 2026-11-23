@@ -1,0 +1,56 @@
+name: Pre-merge Quality Gate
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: premerge-quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Require test updates alongside application logic changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/require-tests.mjs
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install --no-audit --no-fund
+      - name: CIBIL financial-sync regression
+        working-directory: backend
+        run: node test/cibilFinancialSync.test.js
+      - name: CIBIL financial-field parsing regression
+        working-directory: backend
+        run: node test/cibilParserFinancialFields.test.js
+      - name: CIBIL persistence regression
+        working-directory: backend
+        run: node test/cibilPersistence.test.js
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+      - name: Frontend UI data regression
+        working-directory: frontend
+        run: npm run test:ui-data
+      - name: Frontend production build
+        working-directory: frontend
+        run: npm run build
+      - name: Backend syntax verification
+        run: node --check backend/src/server.js
